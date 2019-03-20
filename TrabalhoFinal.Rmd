@@ -1,0 +1,913 @@
+---
+author: "FÃ¡bio Vieira"
+date: "14 de novembro de 2017"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+###Fábio Vieira  
+**Análise de Sobrevivência - Trabalho Final**  
+**14 de outubro de 2017**
+
+<style>
+body {
+text-align: justify}
+</style>
+
+O objetivo deste texto é realizar uma análise utilizando o banco de dados **colon** do pacote "survival". Esse conjunto de dados possui informações de morte e de recorrência de câncer de colon para 929 pessoas. Há duas linhas para cada pessoa, sendo que essas são caracterizadas pela variável "etype", onde "etype == 1" indica recorrência e "etype == 2" indica morte. Além disso, esse banco possuim outras 15 variáveis, que são:  
+
+
+**id**: que identifica o paciente;  
+**study**: vale 1 para todos os pacientes;  
+**rx**: tratament - Obs(ervation), Lev(amisole), Lev(amisole)+5-FU;  
+**sex**: 1 para masculino;  
+**age**: idade em anos;  
+**obstruct**: obstrução do colon pelo tumor;  
+**perfor**: perfuração do colon;  
+**adhere**: aderência do tumor à órgão adjacentes;  
+**nodes**: nº de nódulos linfáticos com câncer detectado;  
+**time**: tempo de sobrevivência;  
+**status**: status de censura;  
+**differ**: diferenciação do tumor (1 = boa, 2 = moderada, 3 = ruim);  
+**extent**:extenção da propagação local (1 = submucosa, 2 = músculo, 3 = serosa, 4 = contíguo);  
+**sug**: tempo da cirurgia até o registro de câncer;  
+**node4**: mais que 4 nódulos linfáticos positivos.  
+
+
+Vamos carregar o banco de dados:
+
+```{r, echo=FALSE, message=FALSE}
+invisible(library(survival))
+invisible(data(colon))
+invisible(head(colon))
+```
+
+```{r}
+names(colon)
+```
+
+
+
+Vamos então, primeiramente, realizar a análise apenas para o evento morte, isto é, "etype == 2".
+
+```{r, echo = FALSE, message=FALSE}
+library(dplyr)
+```
+
+```{r, echo = FALSE, message=FALSE}
+death <- filter(colon, etype == 2)
+attach(death)
+```
+
+
+
+Vamos olhar para as variáveis desses dados, que pela descrição aparentam, com exceção de **age** e **nodes**, ser todas categóricas. Com isso, vamos dicotomizar essas variáveis, separando **age** nos 65 anos, para comparar jovens e idosos e separando **nodes** em 4 nódulos com câncer detectado e vamos utilizar essa variável, aqui chamada de **nodesc** no lugar de **node4** uma vez que ambas querem dizer exatamente a mesma coisa (mais de quatro nódulos linfáticos com câncer).
+
+
+```{r, echo=FALSE}
+agec <- ifelse(age > 65, 1, 0)
+nodesc <- ifelse(nodes > 4, 1, 0)
+table(rx)
+table(sex)
+table(obstruct)
+table(perfor)
+table(adhere)
+table(differ)
+table(extent)
+table(surg)
+table(agec)
+table(nodesc)
+```
+
+
+Com isso, a titulo de visualização vamos plotar a função de sobrevivência ajustada por Kaplan-Meier.
+
+```{r, echo = FALSE, fig.align = 'center'}
+ekm <- survfit(Surv(time, status)~1)
+plot(ekm$time, ekm$surv, type = 'l', main = 'Kaplan-Meier S(t)', xlab = 'tempos',
+     ylab = 'S(t)')
+```
+
+De imediato já é possível notar que, comparado com as situações vistas anteriormente no curso, agora temos uma quantidade de dados bastante grande, o que faz com a função fique mais suave e perca um pouco daquela forma de escada.
+
+
+Novamente a titulo de visualização, vamos observar se há alguma diferença entre as sobrevivências de homens e mulheres para o evento morte por câncer de cólon.
+
+```{r, echo=FALSE, message=FALSE, fig.align = 'center'}
+library(survminer)
+ggsurvplot(survfit(Surv(time, status)~sex, data = death), pval = T)
+```
+
+
+O p-valor do teste logrank impresso no gráfico mostra que não há diferenças significativas entre as sobrevivências de homens e mulheres.
+
+Vamos agora, verificar se é possível realizar o ajuste utilizando um modelo paramétrico. Para tanto, iremos plotar os gráficos de linearização e das funções de sobrevivência estimadas versus a função de sobrevivência de Kaplan-Meier para tentar decidir pelo modelo mais adequado.
+
+```{r, echo=FALSE, fig.align = 'center'}
+st <- ekm$surv
+tm <- ekm$time
+invst <- qnorm(st)
+par(mfrow = c(2, 3))
+plot(tm, -log(st), pch = 16, xlab = "Tempos", ylab = "-log(S(t))",
+     main = "Exponencial")
+plot(log(tm), log(-log(st)), pch = 16, xlab = "log(tempos)",
+     ylab = "log(-log(S(t)))", main = "Weibull")
+plot(log(tm), invst, pch = 16, xlab = "log(tempos)",
+     ylab = expression(Phi^-1*(S(t))), main = "Log-normal")
+
+###Exponencial
+adj11 <- survreg(Surv(time, status) ~ 1, dist = "exponential")
+alpha <- exp(adj11$coefficients[1])
+ste <- exp(-tm/alpha)
+
+###Weibull
+adj22 <- survreg(Surv(time, status) ~ 1, dist = "weibull")
+alpha2 <- exp(adj22$coefficients[1])
+gama <- 1/adj22$scale
+stw <- exp(-(tm/alpha2)^gama)
+
+###Log-Normal
+adj33 <- survreg(Surv(time, status) ~ 1, dist = "lognorm")
+stln <-  pnorm((-log(tm) + adj33$coefficients[1])/adj33$scale)
+
+plot(st, ste, pch = 16, ylim = c(0, 1), xlab = "S(t): Kaplan-Meier",
+     ylab = "S(t): Exponential", main = "Exponencial")
+lines(c(0, 1), c(0, 1), type = "l", lty = 1)
+
+plot(st, stw, pch=16, ylim=range(c(0.0,1)), xlim=range(c(0,1)),
+     xlab = "S(t): Kaplan-Meier", ylab="S(t): Weibull", main = "Weibull")
+lines(c(0,1),c(0,1),type="l",lty=1)
+
+plot(st,stln,pch=16,ylim=range(c(0.0,1)), xlim=range(c(0,1)),
+     xlab="S(t): Kaplan-Meier", ylab="S(t): log-normal", main = "Log-Norm")
+lines(c(0,1),c(0,1),type="l",lty=1)
+```
+
+
+Pelo gráficos aparentemente nenhum modelo é adequado para esse conjunto de dados. Assim, vamos realizar o teste da razão de verossimilhança com modelos encaixados, comparando esses três modelos com a Gama Generalizada para obter uma medida quantitativa da adequação desses modelos aos dados.
+
+```{r, echo=FALSE, message = FALSE}
+require(flexsurv)
+adj4 <- flexsurvreg(Surv(time, status) ~ 1, dist = "gengamma")
+
+
+###Teste Razão de Verossimilhança - forçando a barra é possível não rejeitar o 
+#modelo
+###exponencial ao nível de 5%
+
+###EXponencial
+TRV1 <- 2 * (adj4$loglik - adj11$loglik[2])
+pexp <- 1 - pchisq(TRV1, df = 2)
+
+###Weibull
+TRV2 <- 2 * (adj4$loglik - adj22$loglik[2])
+pwei <- 1 - pchisq(TRV2, df = 1)
+
+###Log-Normal
+TRV3 <- 2 * (adj4$loglik - adj33$loglik[2])
+plog <- 1 - pchisq(TRV3, df = 1)
+
+logl <- c(adj4$loglik, adj11$loglik[2], adj22$loglik[2], adj33$loglik[2])
+trv <- c("", round(TRV1, digits = 4), round(TRV2, digits = 4), 
+         round(TRV3, digits = 4))
+pv <- c("", round(pexp, digits = 4), round(pwei, digits = 4),
+        round(plog, digits = 4))
+
+options(digits = 4)
+t <- data.frame(logl, trv, pv, row.names = c("Gama Generalizada", "Exponencial",
+                                             "Weibull", "Log-Normal"))
+colnames(t) <- c("Log-Verossimilhança", "TRV", "p-valor")
+t
+```
+
+
+
+Pela tabela acima, olhando para a última coluna, vemos que todos os modelos foram rejeitados. Dessa forma, vamos prosseguir para o ajuste do modelo de Cox, já que a sua natureza semi paramétrica permite maior flexibilidade. Vamos então utilizar os passos para seleção de variáveis presentes no capítulo 4 do livro texto do curso. Primeiramente, vamos ajustar modelos com apenas uma variável.
+
+
+
+```{r, echo=FALSE}
+###Modelo de Cox
+#################################################################################
+####SELEÇÃO DE VARIÁVEIS MODELO DE COX###
+#################################################################################
+
+#################################################################################
+####PASSO 1###
+#################################################################################
+
+#MODELO NULO
+fit0 <- coxph(Surv(time, status) ~ 1, data = death, x = T, 
+              method = "breslow")
+
+
+#Categoria Lev+5FU significante ao nível de .001
+fit1 <- coxph(Surv(time, status) ~ as.factor(rx), data = death, x = T, 
+              method = "breslow")
+
+
+#Não significante
+fit2 <- coxph(Surv(time, status) ~ sex, data = death, x = T, 
+              method = "breslow")
+
+#É significante ao nível de .01
+fit3 <- coxph(Surv(time, status) ~ obstruct, data = death, x = T, 
+              method = "breslow")
+
+#Não significante
+fit4 <- coxph(Surv(time, status) ~ perfor, data = death, x = T, 
+              method = "breslow")
+
+
+#Significante ao nível de .001
+fit5 <- coxph(Surv(time, status) ~ adhere, data = death, x = T, 
+              method = "breslow")
+
+
+#Significativo ao nível de .001
+fit6 <- coxph(Surv(time, status) ~ nodesc, data = death, x = T, 
+              method = "breslow")
+
+#Significativo ao nível de .001
+fit7 <- coxph(Surv(time, status) ~ as.factor(differ), data = death, x = T, 
+              method = "breslow")
+
+#Significativo ao nível de .001
+fit8 <- coxph(Surv(time, status) ~ as.factor(extent), data = death, x = T, 
+              method = "breslow")
+
+#Significativo ao nível de .001
+fit9 <- coxph(Surv(time, status) ~ surg, data = death, x = T, 
+              method = "breslow")
+```
+
+
+```{r, echo=FALSE}
+logv <- c(fit0$loglik, fit1$loglik[2], fit2$loglik[2], fit3$loglik[2], 
+          fit4$loglik[2],
+          fit5$loglik[2], fit6$loglik[2], fit7$loglik[2], fit8$loglik[2], 
+          fit9$loglik[2])
+vloglik <- c("", 12.1, 0.02, 5.05, 0.33, 6.04, 86.3, 15.2, 29.2, 5.01)
+p.valor <- c("", 0.00231, 0.887, 0.0246, 0.565, 0.014, 0, 0.000487, 2.03e-06,
+             0.0253)
+
+frame <- data.frame(logv, vloglik, p.valor, row.names = c('nulo', 'rx', 'sex',
+                                                          'obstruct', 'perfor', 'adhere', 'nodesc', 'differ', 'extent', 
+                                                          'surg'))
+colnames(frame) <- c('log-veros', 'TRV', 'p-valor')
+frame
+```
+
+
+
+Pegando somente as variáveis que tiveram significância de pelo menos 10% e ajustando um modelo. 
+
+
+Então, após multiplos ajutes, excluindo e adicionando variáveis, para verificar a signifcância delas na presença e na ausência umas das outras, decidiu-se por retirar apenas as variáveis **adhere** e **differ**, pois eram as únicas que não se mostraram significativas quando se ajustou modelos com múltiplas covariáveis. Portanto o modelo final ficou com as variáveis: **rx**, **obstruct**,
+**extent**, **surg** e **nodesc**.
+
+```{r, echo=FALSE}
+mod <- coxph(Surv(time, status) ~ as.factor(rx) + obstruct + as.factor(extent) +
+             surg + nodesc, x = T, data = death, method = 'breslow')
+```
+
+Vamos agora utilizar as técnicas gráficas e análise de resíduos para verificar a adequação do modelo de Cox.
+
+
+```{r, echo=FALSE, fig.align = 'center'}
+par(mfrow = c(2, 3))
+adj <-coxph(Surv(time[rx=='Lev'], status[rx=='Lev'])~1,data=death,x=T,
+            method="breslow")
+ss<- survfit(adj)
+s0<-round(ss$surv,digits=5)
+H0<- -log(s0)
+plot(ss$time,log(H0),xlab="Tempos",
+     ylab=expression(log(Lambda[0]*(t))), bty="n",type="s")
+adj2 <-coxph(Surv(time[rx== 'Lev+5FU'], status[rx== 'Lev+5FU'])~1,data=death,x=T,
+             method="breslow")
+ss<- survfit(adj2)
+s0<-round(ss$surv,digits=5)
+H0<- -log(s0)
+lines(ss$time,log(H0),type="s",lty=2)
+legend(1500,-2,lty=c(2,1),c("rx = Lev ","rx = Lev+5FU"),lwd=1,bty="n",cex=0.7)
+title("Tratamento (rx)")
+
+################OBSTRUCT
+adj <-coxph(Surv(time[obstruct==0], status[obstruct==0])~1,data=death,x=T,
+            method="breslow")
+ss<- survfit(adj)
+s0<-round(ss$surv,digits=5)
+H0<- -log(s0)
+plot(ss$time,log(H0),xlab="Tempos",
+     ylab=expression(log(Lambda[0]*(t))), bty="n",type="s")
+adj2 <-coxph(Surv(time[obstruct==1], status[obstruct==1])~1,data=death,x=T,
+             method="breslow")
+ss<- survfit(adj2)
+s0<-round(ss$surv,digits=5)
+H0<- -log(s0)
+lines(ss$time,log(H0),type="s",lty=2)
+legend(1500,-3,lty=c(2,1),c("obstruct = 0","obstruct = 1"),lwd=1,bty="n",cex=0.7)
+title("Obstrução do Colon")
+
+#############################Para variável extent (Viola Hipóstese)
+adj <-coxph(Surv(time[extent==2], status[extent==2])~1,data=death,x=T,
+            method="breslow")
+ss<- survfit(adj)
+s0<-round(ss$surv,digits=5)
+H0<- -log(s0)
+plot(ss$time,log(H0),xlab="Tempos",
+     ylab=expression(log(Lambda[0]*(t))), bty="n",type='s')
+adj2 <-coxph(Surv(time[extent==3], status[extent==3])~1,data=death,x=T,
+             method="breslow")
+ss<- survfit(adj2)
+s0<-round(ss$surv,digits=5)
+H0<- -log(s0)
+lines(ss$time,log(H0),type='S',lty=2)
+adj3 <-coxph(Surv(time[extent==4], status[extent==4])~1,data=death,x=T,
+             method="breslow")
+ss<- survfit(adj3)
+s0<-round(ss$surv,digits=5)
+H0<- -log(s0)
+lines(ss$time,log(H0),type='S',lty=3)
+legend(1500,-3,lty=c(1,2,3),c("extent = 2","extent = 3", "extent = 4"),
+       lwd=1,bty="n",cex=0.7)
+title("Extensão do Tumor (extent)")
+
+###########################Para variável surg
+adj <-coxph(Surv(time[surg==0], status[surg==0])~1,data=death,x=T,
+            method="breslow")
+ss<- survfit(adj)
+s0<-round(ss$surv,digits=5)
+H0<- -log(s0)
+plot(ss$time,log(H0),xlab="Tempos",
+     ylab=expression(log(Lambda[0]*(t))), bty="n",type="s")
+adj2 <-coxph(Surv(time[surg==1], status[surg==1])~1,data=death,x=T,
+             method="breslow")
+ss<- survfit(adj2)
+s0<-round(ss$surv,digits=5)
+H0<- -log(s0)
+lines(ss$time,log(H0),type="s",lty=2)
+legend(1500,-3,lty=c(2,1),c("surg = 0","surg = 1"),lwd=1,bty="n",cex=0.7)
+title("Tempo Cirurgia (surg)")
+
+##############################Para variável nodesc
+adj <-coxph(Surv(time[nodesc==0], status[nodesc==0])~1,data=death,x=T,
+            method="breslow")
+ss<- survfit(adj)
+s0<-round(ss$surv,digits=5)
+H0<- -log(s0)
+plot(ss$time,log(H0),xlab="Tempos",
+     ylab=expression(log(Lambda[0]*(t))), bty="n",type="s")
+adj2 <-coxph(Surv(time[nodesc==1], status[nodesc==1])~1,data=death,x=T,
+             method="breslow")
+ss<- survfit(adj2)
+s0<-round(ss$surv,digits=5)
+H0<- -log(s0)
+lines(ss$time,log(H0),type="s",lty=2)
+legend(1500,-3,lty=c(2,1),c("nodesc = 0","nodesc = 1"),lwd=1,bty="n",cex=0.7)
+title("+4 nódulos linfáticos")
+```
+
+
+Por esses gráficos é possível notar que a variável **rx** viola a hipótese de taxas de falha proporcionais. Vamos então realizar a análise dos resíduos de Schoenfeld como mais uma forma de atestar a violação dessa hipótese para cada uma das variáveis.
+
+```{r, echo = FALSE, fig.align= 'center'}
+par(mfrow = c(2, 4))
+plot(cox.zph(mod))
+```
+
+
+Todos os gráficos nesse caso, com exceção de nodesc, não apresentam nenhum tendência forte, crescente ou decrescente, que seria evidência contra a suposição de taxas de falha proporcionais. Outra medida que pode auxiliar nessa decisão é o coeficiente de correlação de Pearson entre os resíduos de Schoenfeld ($\rho$) padronizador e o tempo (uma função do tempo $g(t)$ que no caso é a identidade). Valores de $\rho$ próximos de zero indicam que não há evidência para a rejeição da suposição.
+
+```{r, echo=FALSE}
+cox.zph(mod, transform = "identity")
+```
+
+
+Veja que a variável **rx** que apresentou violação no gráfico descrivito, não teria a suposição rejeitada no teste com os resíduos. O mesmo já não se pode dizer para as variáveis **obstruct** e **nodesc**. Porém, como fica evidente nos gráficos descritivos que os riscos de ambas aparentam ser proporcionais, vamos manter essas variáveis no modelo. Por fim, vamos realizar o gráfico com os resíduos martingal e deviance a fim de detectar a existência de pontos influentes.
+
+
+```{r, echo=FALSE, fig.align= 'center'}
+par(mfrow=c(1,2))
+rd<-resid(mod,type="deviance")       # resíduos deviance
+rm<-resid(mod,type="martingale")     # resíduos martingal
+pl<-mod$linear.predictors
+plot(pl,rm, xlab="Preditor linear", ylab="Resíduo martingal", pch=16)
+plot(pl,rd,  xlab="Preditor linear", ylab="Resíduo deviance" , pch=16)
+```
+
+
+Veja que embora esses gráficos não apresentem nenhum ponto muito discrepante que pudesse ser considerado ponto influente, pode-se que dizer que eles apresentam um padrão no mínimo estranho. Pelo menos, não visto durante as aulas ou nos exemplos do livro. Dessa forma, vamos então prosseguir com a análise dessa vez filtrando os dados para o evento recorrência, isto é "etype == 1".
+
+```{r, echo = FALSE, message=FALSE}
+recurrence <- filter(colon, etype == 1)
+detach(death); attach(recurrence)
+```
+
+
+
+Novamente, dicotomizando as variáveis **age** nos 65 anos e **nodes** em 4 nódulos com câncer detectado. Temos:
+
+
+```{r, echo=FALSE}
+agec <- ifelse(age > 65, 1, 0)
+nodesc <- ifelse(nodes > 4, 1, 0)
+table(rx)
+table(sex)
+table(obstruct)
+table(perfor)
+table(adhere)
+table(differ)
+table(extent)
+table(surg)
+table(agec)
+table(nodesc)
+```
+
+
+
+Com isso, plotando a função de sobrevivência estimada por Kaplan-Meier:
+
+
+```{r, echo = FALSE, fig.align = 'center'}
+ekm2 <- survfit(Surv(time, status)~1)
+plot(ekm2$time, ekm2$surv, type = 'l', main = 'Kaplan-Meier S(t)', xlab = 'tempos', ylab = 'S(t)', ylim = c(0.4, 1))
+lines(ekm$time, ekm$surv, type = 'l', col = 2)
+legend(2500, .9, col = c(1, 2), lwd = 1, bty = 'n', c('recorrência', 'morte'))
+```
+
+
+Olhando para o gráfico fica evidente a diferença entre as sobrevivências dos dois tipos de evento. Como esperado a recorrência acontece mais rápido do que a morte. Vamos então, mais uma vez, verificar se exite alguma diferença entre as sobrevivências de homens e mulheres.
+
+
+```{r, echo=FALSE, message=FALSE, fig.align = 'center'}
+ggsurvplot(survfit(Surv(time, status)~sex, data = recurrence), pval = T)
+```
+
+
+Outra vez, pelo p-valor impresso no gráfico, mostra-se que não há diferenças significativas entre homens e mulheres. Como já na primeira análise todos os modelos paramétricos que foram testados, foram rejeitados. E como o objetivo agora é verificar se há diferenças entre os modelos de Cox para o evento **morte** e para o evento **recorrência**. Vamos partir diretamente para a seleção de variáveis e ajuste do modelo de Cox para esse conjunto de dados.
+
+```{r, echo=FALSE}
+###Modelo de Cox
+#################################################################################
+####SELEÇÃO DE VARIÁVEIS MODELO DE COX###
+#################################################################################
+
+#################################################################################
+####PASSO 1###
+#################################################################################
+
+#MODELO NULO
+fit0 <- coxph(Surv(time, status) ~ 1, data = recurrence, x = T, 
+              method = "breslow")
+
+
+#Categoria Lev+5FU significante ao nível de .001
+fit1 <- coxph(Surv(time, status) ~ as.factor(rx), data = recurrence, x = T, 
+              method = "breslow")
+
+
+#Não significante
+fit2 <- coxph(Surv(time, status) ~ sex, data = recurrence, x = T, 
+              method = "breslow")
+
+#É significante ao nível de .01
+fit3 <- coxph(Surv(time, status) ~ obstruct, data = recurrence, x = T, 
+              method = "breslow")
+
+#Não significante
+fit4 <- coxph(Surv(time, status) ~ perfor, data = recurrence, x = T, 
+              method = "breslow")
+
+
+#Significante ao nível de .001
+fit5 <- coxph(Surv(time, status) ~ adhere, data = recurrence, x = T, 
+              method = "breslow")
+
+
+#Significativo ao nível de .001
+fit6 <- coxph(Surv(time, status) ~ nodesc, data = recurrence, x = T, 
+              method = "breslow")
+
+#Significativo ao nível de .001
+fit7 <- coxph(Surv(time, status) ~ as.factor(differ), data = recurrence, x = T, 
+              method = "breslow")
+
+#Significativo ao nível de .001
+fit8 <- coxph(Surv(time, status) ~ as.factor(extent), data = recurrence, x = T, 
+              method = "breslow")
+
+#Significativo ao nível de .001
+fit9 <- coxph(Surv(time, status) ~ surg, data = recurrence, x = T, 
+              method = "breslow")
+```
+
+
+```{r, echo=FALSE}
+logv <- c(fit0$loglik, fit1$loglik[2], fit2$loglik[2], fit3$loglik[2], 
+          fit4$loglik[2],
+          fit5$loglik[2], fit6$loglik[2], fit7$loglik[2], fit8$loglik[2], 
+          fit9$loglik[2])
+vloglik <- c("", 24.3, 0.81, 4.18, 1.89, 6.2, 73.9, 13.1, 32.6, 6.17)
+p.valor <- c("", 5.23e-06, 0.367, 0.041, 0.169, 0.0127, 0, 0.00147, 3.85e-07,
+             0.013)
+
+frame <- data.frame(logv, vloglik, p.valor, row.names = c('nulo', 'rx', 'sex',
+                                                          'obstruct', 'perfor', 'adhere', 'nodesc', 'differ', 'extent', 
+                                                          'surg'))
+colnames(frame) <- c('log-veros', 'TRV', 'p-valor')
+frame
+```
+
+
+O próximo passo mais uma vez seria olhar para a tabela acima e ajustar um modelo com todas as variáveis com pelo menos 10% de significância. Novamente, após múltiplos ajustes decidiu-se por manter as variáveis **rx**, **extent**, **obstruct**, **surg** e **nodesc**.
+
+```{r, echo = FALSE}
+mod <- coxph(Surv(time, status) ~ as.factor(rx) + as.factor(extent) + surg + 
+               obstruct + nodesc, data = recurrence, x = T, 
+               method = "breslow")
+```
+
+
+Dessa forma, vamos então novamente verificar o adequação do modelo de Cox verificando a suposição de taxas de falha proporcionais.
+
+
+```{r, echo=FALSE, fig.align = 'center'}
+par(mfrow = c(2, 3))
+adj <-coxph(Surv(time[rx=='Lev'], status[rx=='Lev'])~1,data=recurrence,x=T,
+            method="breslow")
+ss<- survfit(adj)
+s0<-round(ss$surv,digits=5)
+H0<- -log(s0)
+plot(ss$time,log(H0),xlab="Tempos",
+     ylab=expression(log(Lambda[0]*(t))), bty="n",type="s")
+adj2 <-coxph(Surv(time[rx== 'Lev+5FU'], status[rx== 'Lev+5FU'])~1,
+             data=recurrence,x=T, method="breslow")
+ss<- survfit(adj2)
+s0<-round(ss$surv,digits=5)
+H0<- -log(s0)
+lines(ss$time,log(H0),type="s",lty=2)
+legend(1500,-2,lty=c(2,1),c("rx = Lev ","rx = Lev+5FU"),lwd=1,bty="n",cex=0.7)
+title("Tratamento (rx)")
+
+################OBSTRUCT
+adj <-coxph(Surv(time[obstruct==0], status[obstruct==0])~1,data=recurrence,x=T,
+            method="breslow")
+ss<- survfit(adj)
+s0<-round(ss$surv,digits=5)
+H0<- -log(s0)
+plot(ss$time,log(H0),xlab="Tempos",
+     ylab=expression(log(Lambda[0]*(t))), bty="n",type="s")
+adj2 <-coxph(Surv(time[obstruct==1], status[obstruct==1])~1,data=recurrence,x=T,
+             method="breslow")
+ss<- survfit(adj2)
+s0<-round(ss$surv,digits=5)
+H0<- -log(s0)
+lines(ss$time,log(H0),type="s",lty=2)
+legend(1500,-3,lty=c(2,1),c("obstruct = 0","obstruct = 1"),lwd=1,bty="n",cex=0.7)
+title("Obstrução do Colon")
+
+#############################Para variável extent (Viola Hipóstese)
+adj <-coxph(Surv(time[extent==2], status[extent==2])~1,data=recurrence,x=T,
+            method="breslow")
+ss<- survfit(adj)
+s0<-round(ss$surv,digits=5)
+H0<- -log(s0)
+plot(ss$time,log(H0),xlab="Tempos",
+     ylab=expression(log(Lambda[0]*(t))), bty="n",type='s')
+adj2 <-coxph(Surv(time[extent==3], status[extent==3])~1,data=recurrence,x=T,
+             method="breslow")
+ss<- survfit(adj2)
+s0<-round(ss$surv,digits=5)
+H0<- -log(s0)
+lines(ss$time,log(H0),type='S',lty=2)
+adj3 <-coxph(Surv(time[extent==4], status[extent==4])~1,data=recurrence,x=T,
+             method="breslow")
+ss<- survfit(adj3)
+s0<-round(ss$surv,digits=5)
+H0<- -log(s0)
+lines(ss$time,log(H0),type='S',lty=3)
+legend(1500,-3,lty=c(1,2,3),c("extent = 2","extent = 3", "extent = 4"),
+       lwd=1,bty="n",cex=0.7)
+title("Extensão do Tumor (extent)")
+
+###########################Para variável surg
+adj <-coxph(Surv(time[surg==0], status[surg==0])~1,data=recurrence,x=T,
+            method="breslow")
+ss<- survfit(adj)
+s0<-round(ss$surv,digits=5)
+H0<- -log(s0)
+plot(ss$time,log(H0),xlab="Tempos",
+     ylab=expression(log(Lambda[0]*(t))), bty="n",type="s")
+adj2 <-coxph(Surv(time[surg==1], status[surg==1])~1,data=recurrence,x=T,
+             method="breslow")
+ss<- survfit(adj2)
+s0<-round(ss$surv,digits=5)
+H0<- -log(s0)
+lines(ss$time,log(H0),type="s",lty=2)
+legend(1500,-3,lty=c(2,1),c("surg = 0","surg = 1"),lwd=1,bty="n",cex=0.7)
+title("Tempo Cirurgia (surg)")
+
+##############################Para variável nodesc
+adj <-coxph(Surv(time[nodesc==0], status[nodesc==0])~1,data=recurrence,x=T,
+            method="breslow")
+ss<- survfit(adj)
+s0<-round(ss$surv,digits=5)
+H0<- -log(s0)
+plot(ss$time,log(H0),xlab="Tempos",
+     ylab=expression(log(Lambda[0]*(t))), bty="n",type="s")
+adj2 <-coxph(Surv(time[nodesc==1], status[nodesc==1])~1,data=recurrence,x=T,
+             method="breslow")
+ss<- survfit(adj2)
+s0<-round(ss$surv,digits=5)
+H0<- -log(s0)
+lines(ss$time,log(H0),type="s",lty=2)
+legend(1500,-3,lty=c(2,1),c("nodesc = 0","nodesc = 1"),lwd=1,bty="n",cex=0.7)
+title("+4 nódulos linfáticos")
+```
+
+
+Dessa vez, tanto a variável **surg** quanto a variável **extent** parecem violar a hipótese de taxas de falha proporcionais. Vamos realizar a análise de resíduos para verificar se esse realmente é o caso.
+
+
+```{r, echo = FALSE, fig.align= 'center'}
+par(mfrow = c(2, 4))
+plot(cox.zph(mod))
+```
+
+Pelos gráficos dos resíduos de Schoenfeld, apenas a variável **nodesc** apresenta um padrão decrescente nítido que poderia estar causando a violação da hipótese. vamos então realizar o teste da correlação de Pearson entre os resíduos padronizados de Schoenfeld e o tempo.
+
+```{r, echo=FALSE}
+cox.zph(mod, transform = "identity")
+```
+
+
+De fato, esse resultado corrobora o que foi apresentado no gráfico dos resíduos, isto é, apenas a variável **nodesc** apresentou violação da hipótese. Mesmo assim, vamos plotar os resíduos martigal e deviance para verificar a existência de pontos influentes e, então, vamos estratificar o banco de dados por sexo, fazendo a análise para os homens, para verificar se a hipótese de taxas de falha proporcionais se mantem para os dados estratificados.
+
+
+```{r, echo=FALSE, fig.align= 'center'}
+par(mfrow=c(1,2))
+rd<-resid(mod,type="deviance")       # resíduos deviance
+rm<-resid(mod,type="martingale")     # resíduos martingal
+pl<-mod$linear.predictors
+plot(pl,rm, xlab="Preditor linear", ylab="Resíduo martingal", pch=16)
+plot(pl,rd,  xlab="Preditor linear", ylab="Resíduo deviance" , pch=16)
+```
+
+
+Mais uma vez os resíduos apresentaram aquele padrão estranho. Dessa vez o gráfico dos resíduos martingal apresentou um ponto próximo de -3.5 que parece ser  um ponto influente, mas vemos que o correspondente desse ponto no gráfico para os resíduos deviance mostra que esse ponto se encontra compreendido em uma região aceitável dentro da variação observada para esses resíduos.
+
+
+Estratificando os dados por sexo, no caso vamos utilizar a estratificação para "sex == 1", para o evento recorrência, isto é "etype == 1".
+
+
+```{r, echo = FALSE, message=FALSE}
+menstrat <- filter(colon, etype == 1 & sex == 1)
+detach(recurrence); attach(menstrat)
+```
+
+
+
+Mais uma vez vamos separa as variáveis **age** e **nodes** em dos grupos, sendo **age** nos 65 anos e **nodes** em 4 nódulos com câncer detectado.
+
+
+```{r, echo=FALSE}
+agec <- ifelse(age > 65, 1, 0)
+nodesc <- ifelse(nodes > 4, 1, 0)
+table(rx)
+table(sex)
+table(obstruct)
+table(perfor)
+table(adhere)
+table(differ)
+table(extent)
+table(surg)
+table(agec)
+table(nodesc)
+```
+
+
+Não vamos perder tempo dessa vez olhando para as funções de sobrevivência estimadas por Kaplan-Meier, pois as mesmas já foram apresentadas nas análises anteriores.
+
+```{r, echo=FALSE}
+###Modelo de Cox
+#################################################################################
+####SELEÇÃO DE VARIÁVEIS MODELO DE COX###
+#################################################################################
+
+#################################################################################
+####PASSO 1###
+#################################################################################
+
+#MODELO NULO
+fit0 <- coxph(Surv(time, status) ~ 1, data = menstrat, x = T, 
+              method = "breslow")
+
+
+#Categoria Lev+5FU significante ao nível de .001
+fit1 <- coxph(Surv(time, status) ~ as.factor(rx), data = menstrat, x = T, 
+              method = "breslow")
+
+#É significante ao nível de .01
+fit3 <- coxph(Surv(time, status) ~ obstruct, data = menstrat, x = T, 
+              method = "breslow")
+
+#Não significante
+fit4 <- coxph(Surv(time, status) ~ perfor, data = menstrat, x = T, 
+              method = "breslow")
+
+
+#Significante ao nível de .001
+fit5 <- coxph(Surv(time, status) ~ adhere, data = menstrat, x = T, 
+              method = "breslow")
+
+
+#Significativo ao nível de .001
+fit6 <- coxph(Surv(time, status) ~ nodesc, data = menstrat, x = T, 
+              method = "breslow")
+
+#Significativo ao nível de .001
+fit7 <- coxph(Surv(time, status) ~ as.factor(differ), data = menstrat, x = T, 
+              method = "breslow")
+
+#Significativo ao nível de .001
+fit8 <- coxph(Surv(time, status) ~ as.factor(extent), data = menstrat, x = T, 
+              method = "breslow")
+
+#Significativo ao nível de .001
+fit9 <- coxph(Surv(time, status) ~ surg, data = menstrat, x = T, 
+              method = "breslow")
+```
+
+
+```{r, echo=FALSE}
+logv <- c(fit0$loglik, fit1$loglik[2], fit3$loglik[2], 
+          fit4$loglik[2],
+          fit5$loglik[2], fit6$loglik[2], fit7$loglik[2], fit8$loglik[2], 
+          fit9$loglik[2])
+vloglik <- c("", 27.2, 8.18, 0, 2.59,  22.8, 10.3, 32.7, 1.41)
+p.valor <- c("", 1.26e-06, 0.00425, 0.978, 0.108,  1.83e-06, 0.00578, 3.74e-07,
+             0.235)
+
+frame <- data.frame(logv, vloglik, p.valor, row.names = c('nulo', 'rx', 'obstruct', 'perfor', 'adhere', 'nodesc', 'differ', 'extent', 'surg'))
+colnames(frame) <- c('log-veros', 'TRV', 'p-valor')
+frame
+```
+
+
+Olhando para a tabela acima é interessante notar que variáveis que antes eram significativas, agora não são mais. Como é o caso de **adhere** e **surg**. Dessa maneira, como anteriormente, após múltiplos ajustes decidiu-se por manter as variáveis **rx**, **obstruct**, **nodesc** e **extent**.
+
+```{r, echo = FALSE}
+mod <- coxph(Surv(time, status) ~ as.factor(rx) + as.factor(extent) + 
+               obstruct + nodesc, data = menstrat, x = T, 
+               method = "breslow")
+```
+
+
+Dessa forma, vamos então novamente verificar o adequação do modelo de Cox verificando a suposição de taxas de falha proporcionais.
+
+
+```{r, echo=FALSE, fig.align = 'center'}
+par(mfrow = c(2, 3))
+adj <-coxph(Surv(time[rx=='Lev'], status[rx=='Lev'])~1,data=menstrat,x=T,
+            method="breslow")
+ss<- survfit(adj)
+s0<-round(ss$surv,digits=5)
+H0<- -log(s0)
+plot(ss$time,log(H0),xlab="Tempos",
+     ylab=expression(log(Lambda[0]*(t))), bty="n",type="s")
+adj2 <-coxph(Surv(time[rx== 'Lev+5FU'], status[rx== 'Lev+5FU'])~1,
+             data=menstrat,x=T, method="breslow")
+ss<- survfit(adj2)
+s0<-round(ss$surv,digits=5)
+H0<- -log(s0)
+lines(ss$time,log(H0),type="s",lty=2)
+legend(1500,-2,lty=c(2,1),c("rx = Lev ","rx = Lev+5FU"),lwd=1,bty="n",cex=0.7)
+title("Tratamento (rx)")
+
+################OBSTRUCT
+adj <-coxph(Surv(time[obstruct==0], status[obstruct==0])~1,data=menstrat,x=T,
+            method="breslow")
+ss<- survfit(adj)
+s0<-round(ss$surv,digits=5)
+H0<- -log(s0)
+plot(ss$time,log(H0),xlab="Tempos",
+     ylab=expression(log(Lambda[0]*(t))), bty="n",type="s")
+adj2 <-coxph(Surv(time[obstruct==1], status[obstruct==1])~1,data=menstrat,x=T,
+             method="breslow")
+ss<- survfit(adj2)
+s0<-round(ss$surv,digits=5)
+H0<- -log(s0)
+lines(ss$time,log(H0),type="s",lty=2)
+legend(1500,-3,lty=c(2,1),c("obstruct = 0","obstruct = 1"),lwd=1,bty="n",cex=0.7)
+title("Obstrução do Colon")
+
+#############################Para variável extent (Viola Hipóstese)
+adj <-coxph(Surv(time[extent==2], status[extent==2])~1,data=menstrat,x=T,
+            method="breslow")
+ss<- survfit(adj)
+s0<-round(ss$surv,digits=5)
+H0<- -log(s0)
+plot(ss$time,log(H0),xlab="Tempos",
+     ylab=expression(log(Lambda[0]*(t))), bty="n",type='s')
+adj2 <-coxph(Surv(time[extent==3], status[extent==3])~1,data=menstrat,x=T,
+             method="breslow")
+ss<- survfit(adj2)
+s0<-round(ss$surv,digits=5)
+H0<- -log(s0)
+lines(ss$time,log(H0),type='S',lty=2)
+adj3 <-coxph(Surv(time[extent==4], status[extent==4])~1,data=menstrat,x=T,
+             method="breslow")
+ss<- survfit(adj3)
+s0<-round(ss$surv,digits=5)
+H0<- -log(s0)
+lines(ss$time,log(H0),type='S',lty=3)
+legend(1500,-3,lty=c(1,2,3),c("extent = 2","extent = 3", "extent = 4"),
+       lwd=1,bty="n",cex=0.7)
+title("Extensão do Tumor (extent)")
+
+##############################Para variável nodesc
+adj <-coxph(Surv(time[nodesc==0], status[nodesc==0])~1,data=menstrat,x=T,
+            method="breslow")
+ss<- survfit(adj)
+s0<-round(ss$surv,digits=5)
+H0<- -log(s0)
+plot(ss$time,log(H0),xlab="Tempos",
+     ylab=expression(log(Lambda[0]*(t))), bty="n",type="s")
+adj2 <-coxph(Surv(time[nodesc==1], status[nodesc==1])~1,data=menstrat,x=T,
+             method="breslow")
+ss<- survfit(adj2)
+s0<-round(ss$surv,digits=5)
+H0<- -log(s0)
+lines(ss$time,log(H0),type="s",lty=2)
+legend(1500,-3,lty=c(2,1),c("nodesc = 0","nodesc = 1"),lwd=1,bty="n",cex=0.7)
+title("+4 nódulos linfáticos")
+```
+
+
+Dessa vez, parece que nenhuma variável está violando a hipótese de taxa de falha prorporcional, no entanto dessa vez temos muito menos observações. Vamos prosseguir para a análise dos resíduos. 
+
+```{r, echo = FALSE, fig.align= 'center'}
+par(mfrow = c(2, 4))
+plot(cox.zph(mod))
+```
+
+Mais uma vez apenas a variável **nodesc** apresenta um padrão decrescente nítido, embora essa angulação esteja bem menor do que antes. Vamos então realizar o teste com os coeficientes de correlação.
+
+```{r, echo=FALSE}
+cox.zph(mod, transform = "identity")
+```
+
+
+Outra vez se vê um problema com a variável **nodesc**. O mais interessante de tudo é que essa variável em momentou algum apresentou o cruzamento das funções de taxa de falha acumulada para os dois níveis dessa variável, enquanto que outras variáveis, como o caso do **rx** na primeira análise, apresentaram esse cruzamento, mas o teste com o coeficiente de correlação não apontou evidências para a rejeição da suposição de taxas de falha proporcionais. 
+
+
+```{r, echo=FALSE, fig.align= 'center'}
+par(mfrow=c(1,2))
+rd<-resid(mod,type="deviance")       # resíduos deviance
+rm<-resid(mod,type="martingale")     # resíduos martingal
+pl<-mod$linear.predictors
+plot(pl,rm, xlab="Preditor linear", ylab="Resíduo martingal", pch=16)
+plot(pl,rd,  xlab="Preditor linear", ylab="Resíduo deviance" , pch=16)
+```
+
+
+Novamente, os resíduos martingal e deviance apresentam aquele padrão perturbador. No entando, no livro texto não explicita se esses resíduos precisam apresentar um padrão aleatório. O que chama a atenção é que os autores comentam sobre "a forma funcional das variáveis" e nesse caso aparentemente esse pode ser o problema. Talvez uma transformação das variáveis resolvesse esse problema dos resíduos. No entanto, dada a extensão da análise e o grande número de variáveis, teríamos dificuldade em saber qual delas está causando esse problema. Portanto, aqui não iremos perseguir esse caminho para tentar resolver essa questão. 
+
+
+Vamos então realizar a interpretação dos coeficientes para esse último modelo, no caso estaremos falando da recorrência do câncer de cólon em homens.
+
+```{r, echo=FALSE}
+summary(mod)
+```
+
+
+Com isso, olhando para a exponencial dos coeficientes vemos que a recorrência em indivíduos que receberam o Lev(amisole)+5-FU é reduzida em aproximadamente 56% comparada com a recorrência do grupo de observação. Enquanto que os pacientes que receberam apenas o tratamento Lev(amisole) a recorrência caiu apenas 5% em relação ao grupo de observação. 
+
+
+Já em relação à extensão da propagação do câncer é possível notar que a recorrência aumenta muito para conforme a extensão do câncer vai se agravando. Sendo crítico para àqueles em que o câncer atingiu as estruturas contíguas ("extent == 4"), esses paciente tem um risco de apromadamente 6.5 vezes maior do que os pacientes onde a extensão atingiu apenas a submucosa ("extent == 1").
+
+
+Para a obstrução do cólon pelo tumor, a recorrência nos indivíduos que apresentam a obstrução é por volta de 50% maior do que a recorrência nos pacientes que não apresentam a obstrução.
+
+
+Por fim, para os pacientes que possuem mais de 4 nódulos linfáticos com câncer detectável a recorrência é aproximadamente 2.1 vezes maior do que a dos indivíduos com 3 nódulos ou menos. 
+
+
+**Conclusão**
+
+
+Nessa análise deu para sentir realmente os problemas que seriam enfrentados em uma análise clínica real. O processo de seleção de variáveis se torna bastante enfadonho a medida que o número de variáveis cresce. 
+
+
+Além disso, foi interessante notar que mesmo tendo uma quantidade enorme dados, o que intuitivamente faz pensar que um modelo paramétrico poderia ser bem ajustado, se a estrutura do modelo paramétrico não for compátivel com os dados de sobrevivência, não importa o quanto se tente ajustar, esse modelo jamais ficará bom. Nesse caso é mais indicado utilizar o modelo de Cox, pois sua natureza semi paramétrica permite maior flexibilidade. Isso talvez explique a popularidade desse modelo em análise de sobrevivência. 
+
+
+Outro ponto interessante que poderia ser explorado é a questão da forma funcional das covariáveis. O livro em si não traz nenhum exemplo de como iriamos ajustar essa forma funcional quando temos apenas variáveis categóricas.
+
+
+Por fim, em relação aos dados em si, vários aspectos surpreenderam, por exemplo a variável **adhere** não ser significativa é algo extremamente curioso, pois intuitivamente a aderência do câncer à órgãos adjacentes deveria impactar tanto na recorrência como na morte do indivíduo, no caso do câncer se espalhar pelo organismo a ponto de se tornar incurável. 
+
+
+Portanto, fazer esse trabalho possibilitou não somente analisar esses aspectos dos dados em si e das estruturas do modelo. Mas também possibilitou adquirir uma melhor compreensão do poder da modelagem de sobrevivência em estudos clínicos. 
